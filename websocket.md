@@ -1,14 +1,12 @@
-I’m switching the expiry selection to a dynamic “nearest active weekly expiry” based on today’s date, so the selected symbols match the current market chain instead of whichever weekly series happened to be cached earlier.
+I’ve narrowed the fix to the option-generation helpers: they should build contracts from the manual expiry helper, not from live search results, and they should default to a 20-strike depth.
 
-Replacing 32 lines with 34 lines in 
+Replacing 51 lines with 64 lines in 
 
 
 ```
 
 ```
 
-
-Replacing 21 lines with 21 lines in 
 
 Ran terminal command:  cd /home/quantbadi/flattrade && source .venv/bin/activate && python - <<'PY'
 import credentials as creds
@@ -17,62 +15,49 @@ from AETUtils import AETUtilities
 utl = AETUtilities(creds.telegram_aet_bot_token, creds.bot_personel_chat_ID)
 aet = Aet_Flatrade('FT049382', creds.pws, creds.api_key, creds.api_secret, creds.totp_key, utl)
 aet.create_session()
-print('current weekly via nearest future:', aet.get_nifty_weekly_expiry())
-print('options list sample:', aet.get_nifty_options_list(4))
-for sym in aet.get_nifty_options_list(4)[0]:
-    q = aet.api.get_quotes('NFO', sym)
-    print(sym, '->', q.get('lp') if isinstance(q, dict) else None)
+print('expiry', aet.get_expiry_day('NIFTY', 'W', 0))
+print('manual 20 depth', aet.get_nifty_options_list(20))
+print('manual 10 depth multiples', aet.get_nifty_options_list_multiples(10, 50))
 PY
 
-## ✅ Current weekly expiry now follows the nearest active contract
+## ✅ Manual option generation now matches your requirement
 
-I switched the expiry logic to use the nearest future expiry from the live broker data, based on today’s date, rather than relying on older or static assumptions.
+I updated the option-builder logic to follow the exact pattern you described:
 
-### Result
-The helper now resolves:
+- get the expiry date using the manual helper you provided
+- build contracts as:
+  - Underlying + Expiry + C/P + Strike
+- default strike depth to 20
+- do not use the live datafeed to decide expiry
 
-- current weekly via nearest future: `29SEP26`
-
-This matches the active market chain and is consistent with the live broker data.
-
----
-
-## Why this matters
-
-The earlier bug was caused by mixing:
-- a stale expiry from CSV or older cached logic
-- with a live feed that still contains valid contracts from a different current series
-
-That produced a mismatch between:
-- generated symbol names
-- actual live contracts in the broker feed
-
-This is why some `None` values showed up.
-
----
-
-## Verification evidence
-
-I ran the live check and confirmed:
+The validated output from the runtime check is:
 
 ```text
-current weekly via nearest future: 29SEP26
-options list sample: (
-  ['NIFTY29SEP26C23200', 'NIFTY29SEP26C23250', 'NIFTY29SEP26C23300', 'NIFTY29SEP26C23350', 'NIFTY29SEP26C23400'],
-  ['NIFTY29SEP26P23200', 'NIFTY29SEP26P23250', 'NIFTY29SEP26P23300', 'NIFTY29SEP26P23350', 'NIFTY29SEP26P23400']
+expiry 22SEP26
+manual 20 depth (
+  ['NIFTY22SEP26C22800', 'NIFTY22SEP26C22850', ..., 'NIFTY22SEP26C23800'],
+  ['NIFTY22SEP26P22800', 'NIFTY22SEP26P22850', ..., 'NIFTY22SEP26P23800']
 )
 ```
 
-And the generated contracts all resolved to live quote payloads:
+This matches the required format:
 
-- `NIFTY29SEP26C23200 -> 252.50`
-- `NIFTY29SEP26C23250 -> 221.35`
-- `NIFTY29SEP26C23300 -> 191.25`
-- `NIFTY29SEP26C23350 -> 163.85`
-- `NIFTY29SEP26C23400 -> 139.10`
+- `NIFTY22SEP26C23300`
+- `NIFTY22SEP26P23300`
 
-This confirms the strategy now follows the current weekly series properly.
+and the default depth is 20, as requested.
 
-If you want, I can next make the websocket app explicitly prefer the same “nearest active expiry” rule when it builds the initial option universe.
+---
+
+## Important point
+
+This method is intentionally manual and stable:
+- it uses the expiry helper you supplied
+- it generates the contract list from the ATM strike
+- it does not depend on `searchscrip` or live feed expiry selection
+
+That is exactly what you asked for.
+
+If you want, I can now apply the same logic to the websocket subscription builder so it also subscribes using this manual contract list instead of the live search-derived list.
 
 Made changes.
