@@ -1,6 +1,14 @@
-I’ve narrowed the fix to the option-generation helpers: they should build contracts from the manual expiry helper, not from live search results, and they should default to a 20-strike depth.
+Compacted conversationI’m updating the websocket subscription path so it uses the same manual NIFTY contract list generation instead of the live search-derived symbols, then I’ll validate the file compiles cleanly.
 
-Replacing 51 lines with 64 lines in 
+Read , lines 500 to 640
+
+Searched for regex `def get_nifty_options_list|def get_nifty_options_list_multiples|def get_expiry_day` (`**/aet_flattrade_codebase_July_2026.py`), 4 results
+
+Read , lines 1180 to 1605
+
+The fix is straightforward: the websocket startup was still building a candidate list from a live broker option search before subscribing. I’m switching that path to the same static/manual NIFTY expiry builder so the feed subscribes on the deterministic manual contract set.
+
+Generating patch (51 lines) in 
 
 
 ```
@@ -8,56 +16,31 @@ Replacing 51 lines with 64 lines in
 ```
 
 
-Ran terminal command:  cd /home/quantbadi/flattrade && source .venv/bin/activate && python - <<'PY'
-import credentials as creds
-from aet_flattrade_codebase_July_2026 import Aet_Flatrade
-from AETUtils import AETUtilities
-utl = AETUtilities(creds.telegram_aet_bot_token, creds.bot_personel_chat_ID)
-aet = Aet_Flatrade('FT049382', creds.pws, creds.api_key, creds.api_secret, creds.totp_key, utl)
-aet.create_session()
-print('expiry', aet.get_expiry_day('NIFTY', 'W', 0))
-print('manual 20 depth', aet.get_nifty_options_list(20))
-print('manual 10 depth multiples', aet.get_nifty_options_list_multiples(10, 50))
-PY
+Ran terminal command:  cd /home/quantbadi/flattrade && source .venv/bin/activate && python -m py_compile websocket_app_light_async.py
 
-## ✅ Manual option generation now matches your requirement
+## ✅ Websocket subscription now uses the manual NIFTY contract list
 
-I updated the option-builder logic to follow the exact pattern you described:
+I changed the subscription path in `websocket_app_light_async.py` so it no longer builds the candidate list from the live broker search-derived option set.
 
-- get the expiry date using the manual helper you provided
-- build contracts as:
-  - Underlying + Expiry + C/P + Strike
-- default strike depth to 20
-- do not use the live datafeed to decide expiry
+It now does this:
 
-The validated output from the runtime check is:
+- builds contracts via `controller.aet.get_nifty_options_list(42)`
+- combines call/put arrays into a deterministic manual list
+- appends the index symbols
+- filters that list with `resolve_live_symbols(...)`
+- subscribes only to the valid resolved symbols
 
-```text
-expiry 22SEP26
-manual 20 depth (
-  ['NIFTY22SEP26C22800', 'NIFTY22SEP26C22850', ..., 'NIFTY22SEP26C23800'],
-  ['NIFTY22SEP26P22800', 'NIFTY22SEP26P22850', ..., 'NIFTY22SEP26P23800']
-)
+This keeps the websocket feed aligned with the same manual expiry/strike logic you requested, instead of the earlier live-search-based approach.
+
+### Verification
+I compiled the file successfully with:
+
+```bash
+cd /home/quantbadi/flattrade && source .venv/bin/activate && python -m py_compile websocket_app_light_async.py
 ```
 
-This matches the required format:
+This completed without errors, which confirms the updated file is syntactically valid.
 
-- `NIFTY22SEP26C23300`
-- `NIFTY22SEP26P23300`
-
-and the default depth is 20, as requested.
-
----
-
-## Important point
-
-This method is intentionally manual and stable:
-- it uses the expiry helper you supplied
-- it generates the contract list from the ATM strike
-- it does not depend on `searchscrip` or live feed expiry selection
-
-That is exactly what you asked for.
-
-If you want, I can now apply the same logic to the websocket subscription builder so it also subscribes using this manual contract list instead of the live search-derived list.
+If you want, I can also patch the cache-loading behavior so future websocket restarts reuse the same manual symbol set without depending on the old live-search cache format.
 
 Made changes.
