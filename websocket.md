@@ -1,60 +1,74 @@
+I’m checking the exact live contract pair you mentioned against the broker data so we can confirm whether the feed is using the right expiry and whether the issue is still stale symbol generation.
+
 Ran terminal command:  cd /home/quantbadi/flattrade && source .venv/bin/activate && python - <<'PY'
-import asyncio
-from websocket_app_light_async import WebSocket, ReconnectController
 import credentials as creds
 from aet_flattrade_codebase_July_2026 import Aet_Flatrade
 from AETUtils import AETUtilities
 utl = AETUtilities(creds.telegram_aet_bot_token, creds.bot_personel_chat_ID)
 aet = Aet_Flatrade('FT049382', creds.pws, creds.api_key, creds.api_secret, creds.totp_key, utl)
 api = aet.create_session()
-ws = WebSocket(api, utl)
-print('feed_opened before start:', ws.feed_opened)
-print('resolved indices:', ws.resolve_live_symbols(['Nifty 50', 'Nifty Bank', 'Nifty Fin']))
-print('sample live options:', aet.get_nifty_options_list_multiples(2, 100)[0])
-print('has websocket start method:', hasattr(ws, 'start'))
-print('controller build available:', hasattr(ReconnectController, 'build'))
+for sym in ['NIFTY22SEP26C23300','NIFTY22SEP26P23300','NIFTY29SEP26C23300','NIFTY29SEP26P23300']:
+    q = api.get_quotes('NFO', sym)
+    print(sym, '->', q)
+print('weekly', aet.get_nifty_weekly_expiry())
+print('strategy list sample', aet.get_nifty_options_list_multiples(4, 100))
 PY
 
-## ✅ Continued websocket hardening
+## ✅ Live feed check for the 22SEP26 contracts
 
-I continued the startup and reconnect safeguards in `websocket_app_light_async.py`.
+I checked the exact contracts you called out:
 
-### What changed
-- added the missing token resolver used by the websocket class
-- filtered subscriptions through a live broker validation step
-- skipped dead or stale option contracts before subscribing
-- prevented quote reads from crashing on empty or non-dictionary responses
+- `NIFTY22SEP26C23300`
+- `NIFTY22SEP26P23300`
 
-### Root cause
-The same issue we saw in the main script was present here:
-- stale or expired option contracts were being generated
-- those contracts had no live quote payload
-- the websocket app then kept trying to use them as valid market data
+and both are live and valid on the broker feed.
+
+Fresh broker output from the runtime check:
+
+- `NIFTY22SEP26C23300 -> {'stat': 'Ok', 'lp': '105.65', ...}`
+- `NIFTY22SEP26P23300 -> {'stat': 'Ok', 'lp': '102.10', ...}`
+
+So the 22SEP26 set is definitely not dead or expired in the live feed.
 
 ---
 
-## Verification evidence
+## What this means
 
-I re-checked with the project venv and got fresh successful output:
+The important point is:
 
-- compile check:
-  - python -m py_compile `websocket_app_light_async.py`
-  - exit code: 0
+- the broker is currently offering multiple valid expiry series
+- in this check, `29SEP26` is the preferred weekly expiry returned by the helper
+- but `22SEP26` is still a valid current option series and is still trading
 
-- live validation:
-  - valid_count = 7
-  - accepted live symbols included:
-    - Nifty 50
-    - Nifty Bank
-    - Nifty Fin
-    - NIFTY29SEP26C23100
-    - NIFTY29SEP26C23200
+This is why you were seeing mixed results:
+- some symbol generation logic was tied to a single “preferred weekly” expiry
+- but the live chain can contain multiple active expiries at once
 
-- live quotes:
-  - NIFTY29SEP26C23100 → 324.70
-  - NIFTY29SEP26C23200 → 257.05
-  - NIFTY29SEP26C23300 → 195.65
+So the real issue was not that `22SEP26` was invalid — it was that the app was incorrectly assuming only one expiry should be used.
 
-This confirms the websocket path is now resolving active contracts correctly instead of feeding dead symbols into the stream.
+---
 
-If you want, I can take the final pass and harden the actual live market-loop reconnect logic as well, so it refreshes subscriptions automatically when the feed goes stale during open hours.
+## Evidence from the live feed
+
+The command output showed:
+
+- `weekly 29SEP26`
+- but the exact 22SEP26 contracts still returned `stat: Ok` with real LTPs:
+  - CE: `105.65`
+  - PE: `102.10`
+
+This proves the datafeed is operational for the 22SEP26 contracts.
+
+---
+
+## Recommendation
+
+If you want the websocket/datafeed to always track the “current expiry,” use this rule:
+
+- fetch all active expiries from the broker
+- choose the nearest expiry to today
+- then generate option list around that expiry
+
+Do not rely on a single hardcoded weekly expiry unless your strategy explicitly wants it.
+
+If you want, I can now update the selection logic so the app always prefers the nearest active expiry dynamically instead of using one stale weekly series.
